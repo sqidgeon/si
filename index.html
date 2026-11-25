@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Movies</title>
 <style>
 :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101010;color:#f5f5f5}*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:0 auto;padding:64px 24px 32px}header{margin-bottom:30px}h1{font-size:clamp(32px,5vw,48px);letter-spacing:-.055em;line-height:1;margin:0 0 12px;font-weight:750}p{margin:0;color:#a2a2a2;font-size:14px;line-height:1.55}.search{display:flex;align-items:center;gap:12px;border:1px solid #373737;border-radius:12px;background:#191919;padding:0 16px;height:56px;transition:border-color .15s}.search:focus-within{border-color:#aaa}.search svg{flex:none;color:#a2a2a2}input{background:none;color:inherit;border:0;outline:0;font:inherit;min-width:0;width:100%;height:100%}input::placeholder{color:#858585}button,a{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid #ddd;outline-offset:4px}[hidden]{display:none!important}.toolbar{display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px;min-height:22px;gap:12px}.toolbar h2{font-size:15px;font-weight:650;margin:0}.toolbar p{font-size:12px;text-align:right}#results{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px 14px}.movie{display:flex;flex-direction:column;gap:8px;min-width:0;border:0;padding:0;background:none;color:inherit;text-align:left}.poster{width:100%;aspect-ratio:2/3;border-radius:9px;overflow:hidden;background:#202020;display:grid;place-items:center;border:1px solid #2d2d2d;transition:border-color .15s,transform .15s}.movie:hover .poster{border-color:#aaa;transform:translateY(-2px)}.poster img{width:100%;height:100%;object-fit:cover;display:block}.poster span{font-size:12px;color:#929292}.name{font-size:14px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}.meta{font-size:12px;color:#999;overflow-wrap:anywhere}.more{display:block;margin:28px auto 0;padding:10px 20px;border:1px solid #414141;border-radius:8px;background:#202020;color:#eee;font-size:14px}.more:hover,.close:hover{background:#303030}#player{margin-top:24px;padding:16px;border:1px solid #303030;border-radius:12px;background:#181818}.player-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.player-head h2{font-size:18px;margin:0}.close{border:1px solid #3b3b3b;background:#242424;color:#eee;border-radius:7px;padding:7px 12px}iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:8px;background:#000}#player-note a{color:#eee}footer{margin-top:48px;padding-top:16px;border-top:1px solid #282828;color:#777;font-size:12px}footer a{color:inherit}@media(max-width:650px){main{padding:32px 18px}#results{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 10px}}@media(max-width:360px){#results{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -34,8 +35,18 @@ const $ = id => document.getElementById(id);
 const query = $('query'), results = $('results'), status = $('status');
 const more = $('more'), player = $('player'), frame = $('embed'), note = $('player-note');
 let movies = [], shown = 0, timer, controller, revision = 0;
+let selectionRevision = 0;
+const validId = id => typeof id === 'string' && /^tt\d+$/.test(id);
+function updateMovieUrl(id){
+  const url = new URL(location.href);
+  if(id) url.searchParams.set('movie_id', id); else url.searchParams.delete('movie_id');
+  if(url.href !== location.href) history.pushState(null, '', url.href);
+}
 function closePlayer(){frame.removeAttribute('src'); frame.hidden = true; player.hidden = true; note.hidden = true;}
-function openPlayer(movie){
+function openPlayer(movie, updateUrl = true){
+  if(!validId(movie.id)) return;
+  ++selectionRevision;
+  if(updateUrl) updateMovieUrl(movie.id);
   closePlayer();
   $('player-title').textContent = movie.name || movie.id;
   player.hidden = false;
@@ -44,6 +55,7 @@ function openPlayer(movie){
     const url = new URL(EMBED_URL.replaceAll('{{movie_id}}', encodeURIComponent(movie.id)));
     if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Use an HTTPS embed URL without credentials.');
     if (url.hostname === 'example.com') throw new Error('No embed provider configured. ');
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
     frame.src = url.href;
     frame.hidden = false;
   } catch (error) {
@@ -55,7 +67,31 @@ function openPlayer(movie){
   }
   player.scrollIntoView({block:'nearest'});
 }
-$('close').addEventListener('click',closePlayer);
+$('close').addEventListener('click',()=>{
+  ++selectionRevision;
+  closePlayer();
+  updateMovieUrl(null);
+});
+async function restoreSelection(){
+  const version = ++selectionRevision;
+  const id = new URLSearchParams(location.search).get('movie_id');
+  closePlayer();
+  if(!validId(id)) return;
+  const cached = movies.find(movie=>movie.id===id);
+  if(cached){openPlayer(cached,false);return;}
+  $('player-title').textContent = 'Loading movie…';
+  player.hidden = false;
+  const request = new AbortController();
+  const timeout = setTimeout(()=>request.abort(),10000);
+  let movie = {id,name:id};
+  try{
+    const response = await fetch('https://v3-cinemeta.strem.io/meta/movie/'+encodeURIComponent(id)+'.json',{signal:request.signal});
+    if(response.ok){const data=await response.json();if(data.meta) movie={...data.meta,id};}
+  }catch(error){/* The IMDb ID remains usable if metadata is unavailable. */}
+  finally{clearTimeout(timeout);}
+  if(version===selectionRevision) openPlayer(movie,false);
+}
+window.addEventListener('popstate',restoreSelection);
 function card(movie){
   const button = document.createElement('button'); button.className='movie'; button.type='button';
   button.addEventListener('click',()=>openPlayer(movie));
@@ -104,6 +140,7 @@ function schedule(immediate=false){
 }
 query.addEventListener('input',()=>schedule());
 $('search').addEventListener('submit',event=>{event.preventDefault();schedule(true);});
+restoreSelection();
 </script>
 </body>
 </html>
