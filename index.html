@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Movies</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#101010;color:#f5f5f5}*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:0 auto;padding:64px 24px 32px}header{margin-bottom:30px}h1{font-size:clamp(32px,5vw,48px);letter-spacing:-.055em;line-height:1;margin:0 0 12px;font-weight:750}p{margin:0;color:#a2a2a2;font-size:14px;line-height:1.55}.search{display:flex;align-items:center;gap:12px;border:1px solid #373737;border-radius:12px;background:#191919;padding:0 16px;height:56px;transition:border-color .15s}.search:focus-within{border-color:#aaa}.search svg{flex:none;color:#a2a2a2}input{background:none;color:inherit;border:0;outline:0;font:inherit;min-width:0;width:100%;height:100%}input::placeholder{color:#858585}button,a{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible{outline:2px solid #ddd;outline-offset:4px}[hidden]{display:none!important}.toolbar{display:flex;justify-content:space-between;align-items:center;margin:24px 0 12px;min-height:22px;gap:12px}.toolbar h2{font-size:15px;font-weight:650;margin:0}.toolbar p{font-size:12px;text-align:right}#results{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:18px 14px}.movie{display:flex;flex-direction:column;gap:8px;min-width:0;border:0;padding:0;background:none;color:inherit;text-align:left}.poster{width:100%;aspect-ratio:2/3;border-radius:9px;overflow:hidden;background:#202020;display:grid;place-items:center;border:1px solid #2d2d2d;transition:border-color .15s,transform .15s}.movie:hover .poster{border-color:#aaa;transform:translateY(-2px)}.poster img{width:100%;height:100%;object-fit:cover;display:block}.poster span{font-size:12px;color:#929292}.name{font-size:14px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}.meta{font-size:12px;color:#999;overflow-wrap:anywhere}.more{display:block;margin:28px auto 0;padding:10px 20px;border:1px solid #414141;border-radius:8px;background:#202020;color:#eee;font-size:14px}.more:hover,.close:hover{background:#303030}#player{margin-top:24px;padding:16px;border:1px solid #303030;border-radius:12px;background:#181818}.player-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.player-head h2{font-size:18px;margin:0}.close{border:1px solid #3b3b3b;background:#242424;color:#eee;border-radius:7px;padding:7px 12px}iframe{display:block;width:100%;aspect-ratio:16/9;border:0;border-radius:8px;background:#000}#player-note a{color:#eee}footer{margin-top:48px;padding-top:16px;border-top:1px solid #282828;color:#777;font-size:12px}footer a{color:inherit}@media(max-width:650px){main{padding:32px 18px}#results{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 10px}}@media(max-width:360px){#results{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<header><h1>Movies<span style="color:#777">.</span></h1><p>Find your next movie.</p></header>
+<form class="search" id="search" role="search">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 5 5" stroke-linecap="round"/></svg>
+<input id="query" type="search" placeholder="Search movies..." aria-label="Search movies" autocomplete="off" spellcheck="false">
+</form>
+<section id="player" hidden aria-label="Selected movie">
+<div class="player-head"><h2 id="player-title"></h2><button type="button" class="close" id="close">Close</button></div>
+<p id="player-note" hidden></p>
+<iframe id="embed" title="Movie player" sandbox="allow-scripts allow-presentation" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen hidden></iframe>
+</section>
+<div class="toolbar"><h2 id="heading">Search movies</h2><p id="status" role="status" aria-live="polite">Type to search</p></div>
+<div id="results"></div>
+<button class="more" id="more" type="button" hidden>Show more</button>
+<footer>Movie data from <a href="https://www.stremio.com/" target="_blank" rel="noopener noreferrer">Cinemeta</a>.</footer>
+</main>
+<script>
+// Change this to your authorized HTTPS embed provider supporting IMDb IDs.
+const EMBED_URL = 'https://stellar.rip/en/watch/embed/movie/{{movie_id}}';
+const PAGE_SIZE = 5;
+const DEBOUNCE_MS = 300;
+const $ = id => document.getElementById(id);
+const query = $('query'), results = $('results'), status = $('status');
+const more = $('more'), player = $('player'), frame = $('embed'), note = $('player-note');
+let movies = [], shown = 0, timer, controller, revision = 0;
+function closePlayer(){frame.removeAttribute('src'); frame.hidden = true; player.hidden = true; note.hidden = true;}
+function openPlayer(movie){
+  closePlayer();
+  $('player-title').textContent = movie.name || movie.id;
+  player.hidden = false;
+  try {
+    if (!EMBED_URL.includes('{{movie_id}}')) throw new Error('The embed URL must contain {{movie_id}}.');
+    const url = new URL(EMBED_URL.replaceAll('{{movie_id}}', encodeURIComponent(movie.id)));
+    if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Use an HTTPS embed URL without credentials.');
+    if (url.hostname === 'example.com') throw new Error('No embed provider configured. ');
+    frame.src = url.href;
+    frame.hidden = false;
+  } catch (error) {
+    const link = document.createElement('a');
+    link.href = 'https://www.imdb.com/title/' + movie.id + '/';
+    link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'View on IMDb';
+    note.replaceChildren(document.createTextNode(error.message + ' '), link);
+    note.hidden = false;
+  }
+  player.scrollIntoView({block:'nearest'});
+}
+$('close').addEventListener('click',closePlayer);
+function card(movie){
+  const button = document.createElement('button'); button.className='movie'; button.type='button';
+  button.addEventListener('click',()=>openPlayer(movie));
+  const poster = document.createElement('div'); poster.className='poster';
+  const fallback = document.createElement('span'); fallback.textContent='No poster'; poster.append(fallback);
+  if(typeof movie.poster==='string' && movie.poster.startsWith('https://')){
+    const image=document.createElement('img'); image.alt=''; image.loading='lazy';
+    image.addEventListener('error',()=>poster.replaceChildren(fallback),{once:true});
+    image.src=movie.poster; poster.replaceChildren(image);
+  }
+  const title=document.createElement('div'); title.className='name'; title.textContent=movie.name||'Untitled';
+  const meta=document.createElement('div'); meta.className='meta'; meta.textContent=[movie.releaseInfo||movie.year,movie.id].filter(Boolean).join(' · ');
+  button.append(poster,title,meta); return button;
+}
+function showMore(){
+  const next=movies.slice(shown,shown+PAGE_SIZE);
+  results.append(...next.map(card)); shown+=next.length;
+  more.hidden=shown>=movies.length;
+  if(movies.length) status.textContent=`Showing ${shown} of ${movies.length}`;
+}
+more.addEventListener('click',showMore);
+async function search(term,version){
+  if(version!==revision)return;
+  const request=new AbortController(); controller=request;
+  const timeout=setTimeout(()=>request.abort(),15000);
+  try{
+    const response=await fetch('https://v3-cinemeta.strem.io/catalog/movie/top/search='+encodeURIComponent(term)+'.json',{signal:request.signal});
+    if(!response.ok)throw new Error('HTTP '+response.status);
+    const data=await response.json(); if(version!==revision)return;
+    const ids=new Set();
+    movies=(Array.isArray(data.metas)?data.metas:[]).filter(m=>m&&typeof m.id==='string'&&/^tt\d+$/.test(m.id)&&!ids.has(m.id)&&(ids.add(m.id),true));
+    shown=0; results.replaceChildren();
+    if(movies.length){$('heading').textContent='Results';showMore();}
+    else status.textContent='No movies found';
+  }catch(error){if(version===revision)status.textContent=error.name==='AbortError'?'Search timed out. Try again.':'Unable to search. Please try again.';}
+  finally{clearTimeout(timeout);if(controller===request)controller=null;}
+}
+function schedule(immediate=false){
+  clearTimeout(timer); if(controller)controller.abort();
+  const version=++revision, term=query.value.trim();
+  movies=[];shown=0;results.replaceChildren();more.hidden=true;
+  $('heading').textContent=term?'Results':'Search movies';
+  status.textContent=term?'Searching…':'Type to search';
+  if(!term)return;
+  if(immediate)search(term,version);else timer=setTimeout(()=>search(term,version),DEBOUNCE_MS);
+}
+query.addEventListener('input',()=>schedule());
+$('search').addEventListener('submit',event=>{event.preventDefault();schedule(true);});
+</script>
+</body>
+</html>
